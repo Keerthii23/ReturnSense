@@ -1,0 +1,19 @@
+Frontend dependencies
+
+frontend/node_modules/
+frontend/dist/
+
+Python AI service
+
+ai-service/.venv/
+ai-service/pycache/
+ai-service/*.pyc
+
+Java build output
+
+backend/target/
+
+Environment secrets
+
+.env
+**/.env

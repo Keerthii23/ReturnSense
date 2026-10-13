@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./index.css";
+const API_URL = "http://localhost:8081/api";
+const AI_API_URL = "http://localhost:8000";
 
 const products = [
   {
@@ -220,6 +222,9 @@ function parseOrders(text) {
 }
 
 function App() {
+  const [backendLoading, setBackendLoading] = useState(true);
+  const [backendError, setBackendError] = useState("");
+  const [analytics, setAnalytics] = useState(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All Products");
   const [cart, setCart] = useState([]);
@@ -228,6 +233,52 @@ function App() {
   const [uploadError, setUploadError] = useState("");
   const [fileName, setFileName] = useState("");
   const [isReading, setIsReading] = useState(false);
+  const [predictionCategory, setPredictionCategory] = useState("Mobiles");
+  const [predictionPrice, setPredictionPrice] = useState("25000");
+  const [predictionDays, setPredictionDays] = useState("7");
+  const [prediction, setPrediction] = useState(null);
+  const [predictionError, setPredictionError] = useState("");
+  const [isPredicting, setIsPredicting] = useState(false);
+
+  useEffect(() => {
+    async function loadBackendData() {
+      setBackendLoading(true);
+      setBackendError("");
+
+      try {
+        const [ordersResponse, analyticsResponse] = await Promise.all([
+          fetch(`${API_URL}/orders`),
+          fetch(`${API_URL}/analytics`),
+        ]);
+
+        if (!ordersResponse.ok || !analyticsResponse.ok) {
+          throw new Error("The backend did not return the required data.");
+        }
+
+        const backendOrders = await ordersResponse.json();
+        const backendAnalytics = await analyticsResponse.json();
+
+        setOrders(
+          backendOrders.map((order) => ({
+            orderId: order.orderId,
+            category: order.category,
+            returned: order.returnStatus?.toLowerCase() === "returned",
+          }))
+        );
+
+        setAnalytics(backendAnalytics);
+      } catch (error) {
+        setBackendError(
+          "Could not load saved backend data. Make sure Spring Boot is running on port 8081 and CORS allows this frontend."
+        );
+        console.error("Backend loading error:", error);
+      } finally {
+        setBackendLoading(false);
+      }
+    }
+
+    loadBackendData();
+  }, []);
 
   const filteredProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -245,7 +296,6 @@ function App() {
       return matchesCategory && matchesSearch;
     });
   }, [search, category]);
-
   const cartCount = cart.reduce(
     (total, item) => total + item.quantity,
     0
@@ -256,35 +306,58 @@ function App() {
     0
   );
 
-  const returnedOrders = orders.filter((order) => order.returned).length;
+  const returnedOrders =
+  analytics?.returnedOrders ??
+  orders.filter((order) => order.returned).length;
 
-  const returnRate =
-    orders.length === 0 ? 0 : (returnedOrders / orders.length) * 100;
+const returnRate =
+  analytics?.returnRate ??
+  (orders.length === 0
+    ? 0
+    : (returnedOrders / orders.length) * 100);
 
-  const categoryAnalytics = useMemo(() => {
-    const grouped = {};
+const totalOrders = analytics?.totalOrders ?? orders.length;
 
-    orders.forEach((order) => {
-      if (!grouped[order.category]) {
-        grouped[order.category] = {
-          category: order.category,
-          total: 0,
-          returned: 0,
-        };
-      }
+const categoryAnalytics = useMemo(() => {
+  if (analytics?.categoryAnalytics) {
+    return Object.entries(analytics.categoryAnalytics).map(
+      ([category, stats]) => ({
+        category,
+        totalOrders: stats.totalOrders,
+        returnedOrders: stats.returnedOrders,
+        returnRate: stats.returnRate,
+      })
+    );
+  }
 
-      grouped[order.category].total += 1;
+  const grouped = {};
 
-      if (order.returned) grouped[order.category].returned += 1;
-    });
+  orders.forEach((order) => {
+    if (!grouped[order.category]) {
+      grouped[order.category] = {
+        category: order.category,
+        totalOrders: 0,
+        returnedOrders: 0,
+      };
+    }
 
-    return Object.values(grouped)
-      .map((item) => ({
-        ...item,
-        returnRate: (item.returned / item.total) * 100,
-      }))
-      .sort((a, b) => b.returnRate - a.returnRate);
-  }, [orders]);
+    grouped[order.category].totalOrders++;
+
+    if (order.returned) {
+      grouped[order.category].returnedOrders++;
+    }
+  });
+
+  return Object.values(grouped)
+    .map((item) => ({
+      ...item,
+      returnRate:
+        item.totalOrders === 0
+          ? 0
+          : (item.returnedOrders / item.totalOrders) * 100,
+    }))
+    .sort((a, b) => b.returnRate - a.returnRate);
+}, [orders, analytics]);
 
   function addToCart(product) {
     setCart((currentCart) => {
@@ -333,10 +406,56 @@ function App() {
       const text = await file.text();
       const importedOrders = parseOrders(text);
 
-      setOrders(importedOrders);
+      const payload = importedOrders.map((order) => ({
+        orderId: order.orderId,
+        category: order.category,
+        returnStatus: order.returned ? "returned" : "not_returned",
+      }));
+
+      const importResponse = await fetch(`${API_URL}/orders/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!importResponse.ok) {
+        const errorText = await importResponse.text();
+        throw new Error(errorText || `CSV import failed (${importResponse.status}).`);
+      }
+
+      const importResult = await importResponse.json();
+
+      const [ordersResponse, analyticsResponse] = await Promise.all([
+        fetch(`${API_URL}/orders`),
+        fetch(`${API_URL}/analytics`),
+      ]);
+
+      if (!ordersResponse.ok || !analyticsResponse.ok) {
+        throw new Error(
+          "The CSV was saved, but the dashboard could not refresh. Reload the page to see the saved data."
+        );
+      }
+
+      const backendOrders = await ordersResponse.json();
+      const backendAnalytics = await analyticsResponse.json();
+
+      setOrders(
+        backendOrders.map((order) => ({
+          orderId: order.orderId,
+          category: order.category,
+          returned: order.returnStatus?.toLowerCase() === "returned",
+        }))
+      );
+      setAnalytics(backendAnalytics);
+      setBackendError("");
       setFileName(file.name);
+      setNotice(
+        `CSV import complete: ${importResult.saved} new orders saved; ${importResult.skippedExisting} existing orders skipped.`
+      );
     } catch (error) {
-      setUploadError(error.message || "Unable to read the CSV file.");
+      setUploadError(
+        error.message || "Unable to import the CSV file. Check that the backend is running."
+      );
     } finally {
       setIsReading(false);
       event.target.value = "";
@@ -361,9 +480,43 @@ function App() {
   }
 
   function clearAnalytics() {
-    setOrders([]);
+    // This clears only the local upload confirmation; it does not delete database records.
     setFileName("");
     setUploadError("");
+  }
+
+  async function predictReturnRisk(event) {
+    event.preventDefault();
+    setPredictionError("");
+    setPrediction(null);
+    setIsPredicting(true);
+
+    try {
+      const response = await fetch(`${AI_API_URL}/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: predictionCategory,
+          price: Number(predictionPrice),
+          daysSincePurchase: Number(predictionDays),
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Prediction service returned ${response.status}.`);
+      }
+
+      setPrediction(await response.json());
+    } catch (error) {
+      setPredictionError(
+        error.message?.includes("Failed to fetch")
+          ? "AI service is not running yet. Start the Python prediction service on port 8000, then try again."
+          : error.message || "Could not generate a prediction."
+      );
+    } finally {
+      setIsPredicting(false);
+    }
   }
 
   return (
@@ -598,12 +751,24 @@ function App() {
               <span className="eyebrow">RETURN MANAGEMENT</span>
               <h2>Understand your returns.</h2>
               <p>
-                Upload historical order records to calculate return
-                statistics. Data is processed in this browser and is not
-                saved to a database yet.
+                View orders saved in MySQL, import historical CSV records, and
+                monitor category-level return patterns. Dashboard statistics
+                refresh from the backend after each successful import.
               </p>
             </div>
           </div>
+
+          {backendLoading && (
+            <p className="data-empty" role="status">
+              Loading saved orders and analytics from the backend...
+            </p>
+          )}
+
+          {backendError && (
+            <p className="upload-error" role="alert">
+              {backendError}
+            </p>
+          )}
 
           <div className="upload-panel">
             <div className="upload-copy">
@@ -618,7 +783,7 @@ function App() {
 
             <div className="upload-actions">
               <label className="primary-button upload-button">
-                {isReading ? "Reading file..." : "Upload order CSV"}
+                {isReading ? "Uploading CSV..." : "Upload order CSV"}
                 <input
                   type="file"
                   accept=".csv,text/csv"
@@ -648,20 +813,20 @@ function App() {
             <div className="file-success" role="status">
               <span>✓</span>
               <span>
-                Successfully imported <strong>{fileName}</strong> —{" "}
-                {orders.length} unique order records.
+                Processed <strong>{fileName}</strong> —{" "}
+                {orders.length} order records currently saved in the database.
               </span>
               <button type="button" onClick={clearAnalytics}>
-                Clear data
+                Dismiss message
               </button>
             </div>
           )}
 
           <div className="analytics-metrics">
             <article className="metric-card">
-              <small>Eligible records in file</small>
+              <small>Total saved orders</small>
               <strong>{orders.length.toLocaleString("en-IN")}</strong>
-              <span>Imported order records</span>
+              <span>Orders currently stored in MySQL</span>
             </article>
 
             <article className="metric-card">
@@ -710,6 +875,64 @@ function App() {
         </p>
       )}
     </section>
+
+        <section className="section-container return-management" id="insights">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">AI INSIGHTS</span>
+              <h2>Predict return risk.</h2>
+              <p>
+                Enter order details to request a prediction from the Python AI
+                service. This is a demo workflow; prediction quality depends on
+                the model and the amount of representative training data.
+              </p>
+            </div>
+          </div>
+
+          <form className="upload-panel" onSubmit={predictReturnRisk}>
+            <div className="upload-copy">
+              <h3>Order details</h3>
+              <p>Choose a product category and enter its price and days since purchase.</p>
+              <label className="prediction-field">
+                Product category
+                <select value={predictionCategory} onChange={(event) => setPredictionCategory(event.target.value)}>
+                  <option>Mobiles</option>
+                  <option>Laptops</option>
+                  <option>Audio</option>
+                  <option>Wearables</option>
+                </select>
+              </label>
+              <label className="prediction-field">
+                Order price (₹)
+                <input type="number" min="1" step="1" required value={predictionPrice} onChange={(event) => setPredictionPrice(event.target.value)} />
+              </label>
+              <label className="prediction-field">
+                Days since purchase
+                <input type="number" min="0" max="3650" step="1" required value={predictionDays} onChange={(event) => setPredictionDays(event.target.value)} />
+              </label>
+            </div>
+            <div className="upload-actions">
+              <button className="primary-button" type="submit" disabled={isPredicting}>
+                {isPredicting ? "Predicting..." : "Predict return risk"}
+              </button>
+            </div>
+          </form>
+
+          {predictionError && <p className="upload-error" role="alert">{predictionError}</p>}
+          {prediction && (
+            <div className="file-success" role="status">
+              <span>✦</span>
+              <span>
+                <strong>Prediction: {prediction.riskLevel || prediction.prediction || "Result received"}</strong>
+                {prediction.probability != null && ` — estimated risk ${(Number(prediction.probability) * (Number(prediction.probability) <= 1 ? 100 : 1)).toFixed(1)}%`}
+                {prediction.note && <span> {prediction.note}</span>}
+              </span>
+            </div>
+          )}
+          <p className="chart-empty">
+            Demo only: do not use this result to make customer decisions until a model has been trained and evaluated on representative historical data.
+          </p>
+        </section>
     </main>
   </div>
 );
