@@ -1,9 +1,11 @@
 package com.returnsense.returnsense;
-
-
-
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.List;
-
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -64,4 +66,61 @@ public class OrderReturnController {
 
         return repository.save(order);
     }
+    @PostMapping("/bulk")
+public ResponseEntity<?> importOrders(
+        @RequestBody List<OrderReturn> incomingOrders) {
+
+    if (incomingOrders == null || incomingOrders.isEmpty()) {
+        return ResponseEntity.badRequest()
+                .body("The CSV contains no orders.");
+    }
+
+    Set<String> seenIds = new HashSet<>();
+    List<OrderReturn> newOrders = new ArrayList<>();
+
+    for (OrderReturn order : incomingOrders) {
+        if (order.getOrderId() == null
+                || order.getOrderId().isBlank()
+                || order.getCategory() == null
+                || order.getCategory().isBlank()
+                || order.getReturnStatus() == null) {
+            return ResponseEntity.badRequest()
+                    .body("Order ID, category, and return status are required.");
+        }
+
+        String orderId = order.getOrderId().trim();
+        String category = order.getCategory().trim();
+        String status = order.getReturnStatus().trim()
+                .toLowerCase();
+
+        if (!status.equals("returned")
+                && !status.equals("not_returned")) {
+            return ResponseEntity.badRequest()
+                    .body("Return status must be returned or not_returned.");
+        }
+
+        if (!seenIds.add(orderId)) {
+            return ResponseEntity.badRequest()
+                    .body("Duplicate order ID in the uploaded file: " + orderId);
+        }
+
+        if (!repository.existsByOrderId(orderId)) {
+            OrderReturn newOrder = new OrderReturn();
+            newOrder.setOrderId(orderId);
+            newOrder.setCategory(category);
+            newOrder.setReturnStatus(status);
+            newOrders.add(newOrder);
+        }
+    }
+
+    List<OrderReturn> savedOrders = repository.saveAll(newOrders);
+
+    Map<String, Object> result = new HashMap<>();
+    result.put("received", incomingOrders.size());
+    result.put("saved", savedOrders.size());
+    result.put("skippedExisting", incomingOrders.size() - savedOrders.size());
+    result.put("message", "CSV import completed.");
+
+    return ResponseEntity.status(HttpStatus.CREATED).body(result);
+}
 }

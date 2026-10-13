@@ -1,0 +1,116 @@
+/* ReturnSense — dashboard visual polish */
+
+:root {
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  color: #172033;
+  background: #f4f7fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f4f7fb;
+  color: #172033;
+  line-height: 1.6;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  border-radius: 9px;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+button:hover {
+  filter: brightness(0.97);
+}
+
+input,
+select {
+  max-width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  color: #172033;
+  background: #fff;
+  border: 1px solid #d7deea;
+  border-radius: 9px;
+}
+
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 3px solid #bfdbfe;
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3,
+p {
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+h2,
+h3 {
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+section {
+  scroll-margin-top: 24px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 12px 14px;
+  text-align: left;
+  border-bottom: 1px solid #e8edf4;
+}
+
+th {
+  color: #526078;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: #f8fafc;
+}
+
+@media (max-width: 700px) {
+  body {
+    font-size: 14px;
+  }
+
+  input,
+  select {
+    width: 100%;
+  }
+
+  th,
+  td {
+    padding: 9px;
+  }
+}
